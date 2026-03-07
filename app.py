@@ -18,6 +18,7 @@ from cleaner import apply_cleaning
 from insights import generate_insights
 from ai_insights import generate_ai_summary
 from query_engine_v2 import answer_query
+from dashboard_generator import generate_dashboard
 from utils import (
     load_file, compute_quality_score,
     df_to_csv_bytes, df_to_excel_bytes,
@@ -376,6 +377,25 @@ for tab, key in zip(tabs, section_keys):
                 st.markdown(f'<div class="ai-card">{line}</div>', unsafe_allow_html=True)
         else:
             st.info("No observations for this section.")
+
+# ═════════════════════════════════════════════
+# SECTION: EXECUTIVE ANALYTICS DASHBOARD
+# ═════════════════════════════════════════════
+
+st.divider()
+st.markdown("""
+<div style="
+    background: linear-gradient(90deg, #4F8BF9, #A259FF);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    font-size: 1.9rem; font-weight: 800; margin-bottom: 0.2rem;
+">📊 Executive Analytics Dashboard</div>
+<div style="color:#888; font-size:0.9rem; margin-bottom:1rem;">
+    Interactive Power BI–style dashboard • Use sidebar filters to drill down
+</div>
+""", unsafe_allow_html=True)
+
+with st.spinner("🖼️ Rendering dashboard..."):
+    generate_dashboard(df_clean)
 
 # ═════════════════════════════════════════════
 # SECTION: DATA VISUALIZATION DASHBOARD
