@@ -646,11 +646,9 @@ def _render_correlations(df: pd.DataFrame):
             text_auto=True,
             aspect="auto",
         )
-        fig.update_traces(textfont_size=11)
         fig.update_coloraxes(colorbar=dict(
-            title="r",
-            tickfont=dict(color=FONT_COLOR),
-            titlefont=dict(color=FONT_COLOR),
+    title=dict(text="r", font=dict(color=FONT_COLOR)),
+    tickfont=dict(color=FONT_COLOR)
         ))
         _apply_layout(fig, "Correlation Matrix", height=400)
         st.plotly_chart(fig, use_container_width=True)
