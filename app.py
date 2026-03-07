@@ -17,6 +17,7 @@ from analyzer import profile_dataset, detect_issues, generate_suggestions
 from cleaner import apply_cleaning
 from insights import generate_insights
 from ai_insights import generate_ai_summary
+from query_engine_v2 import answer_query
 from utils import (
     load_file, compute_quality_score,
     df_to_csv_bytes, df_to_excel_bytes,
@@ -482,6 +483,85 @@ if len(numeric_cols) >= 2:
         plt.close(fig)
     except Exception as e:
         st.warning(f"Could not render heatmap: {e}")
+
+# ═════════════════════════════════════════════
+# SECTION: NATURAL LANGUAGE QUERY ENGINE
+# ═════════════════════════════════════════════
+
+st.divider()
+st.markdown('<div class="section-header">💬 Ask Questions About Your Dataset</div>',
+            unsafe_allow_html=True)
+st.markdown("Type a plain-English business question and get an instant answer powered by your data.")
+
+# ── Example questions grid ────────────────────────────────────────────────────
+
+EXAMPLE_QUESTIONS = [
+    "Which city has the highest sales?",
+    "What is the total revenue?",
+    "Which product sells the most?",
+    "What is the average price?",
+    "Show sales by city",
+    "Who are the top 3 customers?",
+    "What is the total quantity sold?",
+    "Most popular product?",
+    "Which region has the lowest sales?",
+    "Revenue per product",
+    "Show sales trend over time",
+    "Forecast next month revenue",
+    "What is the correlation between numeric columns?",
+    "Which region is declining?",
+    "Show revenue share by category",
+    "How many unique customers are there?",
+    "Show sales distribution",
+    "Top 5 categories by revenue",
+    "What is the average order value?",
+    "Top 5% customers by revenue",
+]
+
+with st.expander("💡 Example Questions — click to copy", expanded=True):
+    cols = st.columns(2)
+    for i, example in enumerate(EXAMPLE_QUESTIONS):
+        with cols[i % 2]:
+            st.markdown(f"• _{example}_")
+
+# ── Query Input ───────────────────────────────────────────────────────────────
+
+st.markdown("")
+question = st.text_input(
+    "🔍 Your Question",
+    placeholder="e.g. Which city has the highest sales?",
+    key="nl_query_input",
+)
+
+col_ask, col_clear = st.columns([2, 1])
+with col_ask:
+    ask_btn = st.button("📊 Get Answer", type="primary", use_container_width=True)
+
+if ask_btn and question.strip():
+    with st.spinner("Analysing your question..."):
+        answer = answer_query(df_clean, question)
+    st.success("**Answer:**")
+    st.markdown(answer)
+    # Save to history
+    if "query_history" not in st.session_state:
+        st.session_state.query_history = []
+    st.session_state.query_history.insert(0, {"q": question, "a": answer})
+    st.session_state.query_history = st.session_state.query_history[:10]
+
+elif ask_btn and not question.strip():
+    st.warning("Please type a question first.")
+
+# ── Query History (session state) ────────────────────────────────────────────
+
+if "query_history" not in st.session_state:
+    st.session_state.query_history = []
+
+if st.session_state.query_history:
+    with st.expander("🕓 Recent Questions", expanded=False):
+        for item in st.session_state.query_history:
+            st.markdown(f"**Q:** {item['q']}")
+            st.markdown(f"**A:** {item['a']}")
+            st.divider()
 
 # ═════════════════════════════════════════════
 # DOWNLOAD
