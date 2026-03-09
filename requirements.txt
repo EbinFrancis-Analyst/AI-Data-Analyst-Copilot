@@ -4,6 +4,5 @@ numpy>=1.26.0
 plotly>=5.18.0
 openpyxl>=3.1.2
 xlrd>=2.0.1
-matplotlib>=3.8.0
 reportlab>=4.0.0
 statsmodels>=0.14.0
