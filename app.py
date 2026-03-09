@@ -50,24 +50,6 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-/* ── Profile buttons ───────────────────────────────────────────────────── */
-.profile-btn {
-    display:inline-flex; align-items:center; gap:.45rem;
-    padding:.42rem .95rem; border-radius:22px;
-    font-size:.82rem; font-weight:600; text-decoration:none !important;
-    transition:transform .18s ease, box-shadow .18s ease, filter .18s ease;
-    border:1.5px solid transparent; white-space:nowrap;
-}
-.profile-btn:hover {
-    transform:translateY(-2px);
-    box-shadow:0 6px 20px rgba(0,0,0,.35);
-    filter:brightness(1.12);
-    text-decoration:none !important;
-}
-.btn-linkedin { background:#0A66C2; color:#fff !important; border-color:#0A66C2; }
-.btn-github   { background:#24292E; color:#fff !important; border-color:#555; }
-.btn-email    { background:#EA4335; color:#fff !important; border-color:#EA4335; }
-
 /* ── App chrome ────────────────────────────────────────────────────────── */
 .hero-title {
     font-size:2.2rem; font-weight:800; line-height:1.15;
@@ -92,78 +74,130 @@ div[data-testid="stDownloadButton"] button { width:100%; border-radius:8px; }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PROFESSIONAL HEADER  (social profile buttons + title in one row)
+# PROFESSIONAL HEADER  — rendered via components.v1.html so Streamlit's
+# markdown sanitiser NEVER touches it (fixes raw-HTML-visible-on-page bug).
 # ─────────────────────────────────────────────────────────────────────────────
 
-st.markdown("""
-<div style="display:flex; justify-content:space-between; align-items:center;
-            flex-wrap:wrap; gap:1rem; margin-bottom:.25rem;">
+import streamlit.components.v1 as _components
 
-  <!-- Left: title block -->
+_components.html("""
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Inter", "Segoe UI", sans-serif;
+    background: transparent;
+    padding: 4px 0 6px 0;
+  }
+  .header-wrap {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .title {
+    font-size: 2rem;
+    font-weight: 800;
+    background: linear-gradient(90deg, #4F8BF9, #A259FF);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    line-height: 1.2;
+  }
+  .subtitle {
+    font-size: 0.82rem;
+    color: #888;
+    margin-top: 4px;
+  }
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 16px;
+    border-radius: 22px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-decoration: none;
+    color: #fff;
+    border: 1.5px solid transparent;
+    cursor: pointer;
+    transition: transform 0.18s, box-shadow 0.18s, filter 0.18s;
+    white-space: nowrap;
+  }
+  .btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+    filter: brightness(1.15);
+    text-decoration: none;
+  }
+  .btn-li  { background: #0A66C2; border-color: #0A66C2; }
+  .btn-gh  { background: #24292E; border-color: #555; }
+  .btn-em  { background: #EA4335; border-color: #EA4335; }
+  svg { flex-shrink: 0; }
+</style>
+</head>
+<body>
+<div class="header-wrap">
+
   <div>
-    <div class="hero-title">🤖 AI Data Analyst Copilot</div>
-    <div style="color:#888; font-size:.85rem; margin-top:.15rem;">
+    <div class="title">🤖 AI Data Analyst Copilot</div>
+    <div class="subtitle">
       Large-dataset ready &nbsp;·&nbsp; Automated cleaning &nbsp;·&nbsp;
       Executive dashboard &nbsp;·&nbsp; NL charts &nbsp;·&nbsp; PDF report
     </div>
   </div>
 
-  <!-- Right: profile buttons -->
-  <div style="display:flex; gap:.6rem; flex-wrap:wrap; align-items:center;">
+  <div class="btns">
 
-    <a class="profile-btn btn-linkedin"
+    <a class="btn btn-li"
        href="https://www.linkedin.com/in/ebin-francis-30b7b4273/"
        target="_blank" rel="noopener noreferrer">
-      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15"
-           viewBox="0 0 24 24" fill="white">
-        <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037
-                 -1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414
-                 v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37
-                 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0
-                 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782
-                 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0
-                 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24
-                 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="white">
+        <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853
+        0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85
+        3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0
+        1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225
+        0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24
+        23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
       </svg>
       LinkedIn
     </a>
 
-    <a class="profile-btn btn-github"
+    <a class="btn btn-gh"
        href="https://github.com/EbinFrancis-Analyst"
        target="_blank" rel="noopener noreferrer">
-      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15"
-           viewBox="0 0 24 24" fill="white">
-        <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438
-                 9.8 8.205 11.385.6.113.82-.258.82-.577
-                 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61
-                 C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729
-                 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305
-                 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332
-                 -5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105
-                 -3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405
-                 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645
-                 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0
-                 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22
-                 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57
-                 C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="white">
+        <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577
+        0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633
+        17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809
+        1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38
+        1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405
+        1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12
+        3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81
+        2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592
+        24 12.297c0-6.627-5.373-12-12-12"/>
       </svg>
       GitHub
     </a>
 
-    <a class="profile-btn btn-email"
-       href="mailto:ebinfrancis82@gmail.com">
-      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15"
-           viewBox="0 0 24 24" fill="white">
-        <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2
-                 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8
-                 5-8-5V6l8 5 8-5v2z"/>
+    <a class="btn btn-em" href="mailto:ebinfrancis82@gmail.com">
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="white">
+        <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9
+        2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
       </svg>
       Email
     </a>
 
   </div>
 </div>
-""", unsafe_allow_html=True)
+</body>
+</html>
+""", height=80)
 
 st.divider()
 
