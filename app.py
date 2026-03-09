@@ -1,12 +1,11 @@
 """
-app.py — AI Data Analyst Copilot  v4 (Production)
-======================================================
-Bug fixes in this version:
-  BUG-1  Session state: df_clean, kpis, pdf_bytes survive every rerun
-  BUG-2  Download buttons: read from session_state, never reset UI
-  BUG-3  PDF generation: generated once, stored in session_state
-  BUG-4  Large dataset lag: cached analytics, sampled previews, lazy tabs
-  BUG-5  Plotly trendline OLS removed (no statsmodels dependency)
+app.py — AI Data Analyst Copilot  v5
+=====================================================
+New in v5:
+  FEATURE  Professional social profile buttons in page header
+  BUG-1    Ambiguous column → disambiguation widget in NL chart generator
+  BUG-2    get_dataset_schema() guards all column references
+  BUG-3    clean_numeric_columns() applied on file load (before any analytics)
 """
 
 from __future__ import annotations
@@ -18,21 +17,23 @@ import pandas as pd
 import streamlit as st
 
 # ── Local modules ──────────────────────────────────────────────────────────────
-from data_loader         import load_file, get_preview, memory_report
-from analytics_engine    import (
+from data_loader      import load_file, get_preview, memory_report
+from analytics_engine import (
     compute_kpis, column_profile, quality_score, distribution_metrics,
+    get_dataset_schema, clean_numeric_columns,
+    resolve_column_ambiguity, ambiguity_message,
 )
 from dashboard_generator import generate_dashboard, apply_filters
 from query_engine_v3     import generate_chart, EXAMPLE_QUERIES
 from report_generator    import generate_pdf_report, is_available as pdf_available
 
-# ── Cleaning pipeline (unchanged from previous version) ───────────────────────
 from analyzer import profile_dataset, detect_issues, generate_suggestions
 from cleaner  import apply_cleaning
 from utils    import df_to_csv_bytes, df_to_excel_bytes
 
+
 # ─────────────────────────────────────────────────────────────────────────────
-# PAGE CONFIG — must be first Streamlit call
+# PAGE CONFIG  (must be the very first Streamlit call)
 # ─────────────────────────────────────────────────────────────────────────────
 
 st.set_page_config(
@@ -42,48 +43,148 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+
 # ─────────────────────────────────────────────────────────────────────────────
-# CSS
+# GLOBAL CSS
 # ─────────────────────────────────────────────────────────────────────────────
 
 st.markdown("""
 <style>
-  .hero-title {
-      font-size:2.2rem; font-weight:800;
-      background:linear-gradient(90deg,#4F8BF9,#A259FF);
-      -webkit-background-clip:text; -webkit-text-fill-color:transparent;
-  }
-  .section-hdr {
-      font-size:1.05rem; font-weight:700; color:#A259FF;
-      margin-top:1.2rem; border-bottom:2px solid #A259FF22; padding-bottom:.3rem;
-  }
-  .badge-high   { color:#FF4B4B; font-weight:700; }
-  .badge-medium { color:#FFA500; font-weight:600; }
-  .badge-low    { color:#4F8BF9; }
-  div[data-testid="stDownloadButton"] button {
-      width:100%; border-radius:8px;
-  }
+/* ── Profile buttons ───────────────────────────────────────────────────── */
+.profile-btn {
+    display:inline-flex; align-items:center; gap:.45rem;
+    padding:.42rem .95rem; border-radius:22px;
+    font-size:.82rem; font-weight:600; text-decoration:none !important;
+    transition:transform .18s ease, box-shadow .18s ease, filter .18s ease;
+    border:1.5px solid transparent; white-space:nowrap;
+}
+.profile-btn:hover {
+    transform:translateY(-2px);
+    box-shadow:0 6px 20px rgba(0,0,0,.35);
+    filter:brightness(1.12);
+    text-decoration:none !important;
+}
+.btn-linkedin { background:#0A66C2; color:#fff !important; border-color:#0A66C2; }
+.btn-github   { background:#24292E; color:#fff !important; border-color:#555; }
+.btn-email    { background:#EA4335; color:#fff !important; border-color:#EA4335; }
+
+/* ── App chrome ────────────────────────────────────────────────────────── */
+.hero-title {
+    font-size:2.2rem; font-weight:800; line-height:1.15;
+    background:linear-gradient(90deg,#4F8BF9,#A259FF);
+    -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+}
+.section-hdr {
+    font-size:1.05rem; font-weight:700; color:#A259FF;
+    margin-top:1.2rem; border-bottom:2px solid #A259FF22; padding-bottom:.3rem;
+}
+.badge-high   { color:#FF4B4B; font-weight:700; }
+.badge-medium { color:#FFA500; font-weight:600; }
+.badge-low    { color:#4F8BF9; }
+.schema-box {
+    background:#0d1117; border:1px solid #30363d; border-radius:8px;
+    padding:.75rem 1rem; font-family:monospace; font-size:.78rem;
+    color:#c9d1d9; white-space:pre-wrap; line-height:1.6;
+}
+div[data-testid="stDownloadButton"] button { width:100%; border-radius:8px; }
 </style>
 """, unsafe_allow_html=True)
 
+
 # ─────────────────────────────────────────────────────────────────────────────
-# SESSION STATE INITIALISATION
-# All persistent state is stored here so reruns (button clicks, downloads)
-# never lose the cleaned dataframe or computed results.
+# PROFESSIONAL HEADER  (social profile buttons + title in one row)
+# ─────────────────────────────────────────────────────────────────────────────
+
+st.markdown("""
+<div style="display:flex; justify-content:space-between; align-items:center;
+            flex-wrap:wrap; gap:1rem; margin-bottom:.25rem;">
+
+  <!-- Left: title block -->
+  <div>
+    <div class="hero-title">🤖 AI Data Analyst Copilot</div>
+    <div style="color:#888; font-size:.85rem; margin-top:.15rem;">
+      Large-dataset ready &nbsp;·&nbsp; Automated cleaning &nbsp;·&nbsp;
+      Executive dashboard &nbsp;·&nbsp; NL charts &nbsp;·&nbsp; PDF report
+    </div>
+  </div>
+
+  <!-- Right: profile buttons -->
+  <div style="display:flex; gap:.6rem; flex-wrap:wrap; align-items:center;">
+
+    <a class="profile-btn btn-linkedin"
+       href="https://www.linkedin.com/in/ebin-francis-30b7b4273/"
+       target="_blank" rel="noopener noreferrer">
+      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15"
+           viewBox="0 0 24 24" fill="white">
+        <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037
+                 -1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414
+                 v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37
+                 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0
+                 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782
+                 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0
+                 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24
+                 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
+      </svg>
+      LinkedIn
+    </a>
+
+    <a class="profile-btn btn-github"
+       href="https://github.com/EbinFrancis-Analyst"
+       target="_blank" rel="noopener noreferrer">
+      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15"
+           viewBox="0 0 24 24" fill="white">
+        <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438
+                 9.8 8.205 11.385.6.113.82-.258.82-.577
+                 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61
+                 C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729
+                 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305
+                 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332
+                 -5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105
+                 -3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405
+                 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645
+                 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0
+                 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22
+                 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57
+                 C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
+      </svg>
+      GitHub
+    </a>
+
+    <a class="profile-btn btn-email"
+       href="mailto:ebinfrancis82@gmail.com">
+      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15"
+           viewBox="0 0 24 24" fill="white">
+        <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2
+                 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8
+                 5-8-5V6l8 5 8-5v2z"/>
+      </svg>
+      Email
+    </a>
+
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+st.divider()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SESSION STATE  (all persistent state — survives every rerun / button click)
 # ─────────────────────────────────────────────────────────────────────────────
 
 _SS_DEFAULTS: dict = {
-    "df_raw":           None,   # raw uploaded dataframe
-    "df_clean":         None,   # cleaned dataframe (survives every rerun)
-    "df_filtered":      None,   # dashboard-filtered view
-    "kpis":             None,   # computed KPIs dict
-    "cleaning_report":  None,   # cleaning action summary
-    "pdf_bytes":        None,   # generated PDF bytes
-    "file_name":        None,   # uploaded filename
-    "analysis_done":    False,  # True once Apply & Analyse has run
-    "profile":          None,   # dataset profile
-    "issues":           None,   # detected issues list
-    "suggestions":      None,   # cleaning suggestions list
+    "df_raw":          None,
+    "df_clean":        None,
+    "df_filtered":     None,
+    "kpis":            None,
+    "cleaning_report": None,
+    "pdf_bytes":       None,
+    "file_name":       None,
+    "analysis_done":   False,
+    "profile":         None,
+    "issues":          None,
+    "suggestions":     None,
+    "nl_col_override": None,   # BUG-1: user-chosen column when ambiguous
 }
 
 for k, v in _SS_DEFAULTS.items():
@@ -106,13 +207,6 @@ with st.sidebar:
     st.markdown("### ⚙️ Settings")
     preview_n = st.slider("Preview rows", 10, 200, 100, step=10)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# HEADER
-# ─────────────────────────────────────────────────────────────────────────────
-
-st.markdown('<div class="hero-title">🤖 AI Data Analyst Copilot</div>', unsafe_allow_html=True)
-st.markdown("Large-dataset ready · Automated cleaning · Executive dashboard · NL charts · PDF report")
-st.divider()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # WELCOME SCREEN
@@ -147,15 +241,14 @@ if uploaded is None and st.session_state["df_raw"] is None:
     st.info("👆 Upload a CSV or Excel file from the sidebar to get started.")
     st.stop()
 
+
 # ─────────────────────────────────────────────────────────────────────────────
-# FILE LOAD — only re-reads when a new file is uploaded
+# FILE LOAD  (re-reads only when a new file arrives)
 # ─────────────────────────────────────────────────────────────────────────────
 
 if uploaded is not None:
-    # Detect whether a new file has been uploaded
     new_file = uploaded.name != st.session_state.get("file_name")
     if new_file:
-        # Reset all derived state when a different file is uploaded
         for k, v in _SS_DEFAULTS.items():
             st.session_state[k] = v
 
@@ -167,20 +260,24 @@ if uploaded is not None:
             st.error(f"❌ {err}")
             st.stop()
 
-        st.session_state["df_raw"]     = df_raw
-        st.session_state["file_name"]  = uploaded.name
+        # ── BUG-3: fix dirty numeric-as-object columns immediately on load ──
+        with st.spinner("🔧 Fixing numeric column types …"):
+            df_raw = clean_numeric_columns(df_raw)
 
-        # Pre-compute profile & issues once on load
+        st.session_state["df_raw"]    = df_raw
+        st.session_state["file_name"] = uploaded.name
+
         with st.spinner("🔬 Profiling dataset …"):
             profile     = profile_dataset(df_raw)
             issues      = detect_issues(df_raw, profile)
             suggestions = generate_suggestions(df_raw, profile, issues)
+
         st.session_state["profile"]     = profile
         st.session_state["issues"]      = issues
         st.session_state["suggestions"] = suggestions
         gc.collect()
 
-# Retrieve raw df from session_state
+
 df_raw = st.session_state["df_raw"]
 if df_raw is None:
     st.warning("Please upload a dataset using the sidebar.")
@@ -193,13 +290,31 @@ st.success(
     f"{rows:,} rows × {cols_n} columns — {mem_mb} MB in RAM"
 )
 
+
 # ─────────────────────────────────────────────────────────────────────────────
-# DATASET PREVIEW (first N rows only)
+# DATASET SCHEMA  (BUG-2 — shows validated column list to user)
+# ─────────────────────────────────────────────────────────────────────────────
+
+with st.expander("🗂️ Dataset Schema (validated column list)", expanded=False):
+    schema_str = get_dataset_schema(df_raw)
+    st.markdown(
+        f'<div class="schema-box">{schema_str}</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "This schema is used internally to prevent column hallucination. "
+        "All chart and analysis operations only reference columns listed here."
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DATASET PREVIEW
 # ─────────────────────────────────────────────────────────────────────────────
 
 st.markdown('<div class="section-hdr">📋 Dataset Preview</div>', unsafe_allow_html=True)
 st.caption(f"Showing first {min(preview_n, rows):,} of {rows:,} rows")
 st.dataframe(get_preview(df_raw, preview_n), use_container_width=True)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DATA QUALITY OVERVIEW
@@ -208,9 +323,9 @@ st.dataframe(get_preview(df_raw, preview_n), use_container_width=True)
 st.markdown('<div class="section-hdr">📊 Data Quality Overview</div>', unsafe_allow_html=True)
 
 score, score_label, bar_colour = quality_score(df_raw)
-prof_df  = column_profile(df_raw)
-dupes    = int(df_raw.duplicated().sum())
-missing  = int(df_raw.isna().sum().sum())
+prof_df = column_profile(df_raw)
+dupes   = int(df_raw.duplicated().sum())
+missing = int(df_raw.isna().sum().sum())
 
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Rows",           f"{rows:,}")
@@ -240,6 +355,7 @@ with st.expander("🧠 Memory Usage by Column", expanded=False):
         use_container_width=True, hide_index=True,
     )
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ISSUE DETECTION & CLEANING SUGGESTIONS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -254,10 +370,9 @@ if issues:
     med_n  = sum(1 for i in issues if i["severity"] == "Medium")
     low_n  = sum(1 for i in issues if i["severity"] == "Low")
     ih, im, il = st.columns(3)
-    ih.markdown(f'<span class="badge-high">🔴 High: {high_n}</span>',   unsafe_allow_html=True)
+    ih.markdown(f'<span class="badge-high">🔴 High: {high_n}</span>',    unsafe_allow_html=True)
     im.markdown(f'<span class="badge-medium">🟠 Medium: {med_n}</span>', unsafe_allow_html=True)
     il.markdown(f'<span class="badge-low">🔵 Low: {low_n}</span>',       unsafe_allow_html=True)
-
     with st.expander("📋 All Detected Issues", expanded=False):
         st.dataframe(pd.DataFrame([{
             "Column":      i["column"],
@@ -269,7 +384,6 @@ if issues:
 else:
     st.success("✨ No issues detected — dataset looks clean!")
 
-# Cleaning suggestions checklist
 st.markdown("#### 💡 Cleaning Suggestions")
 selected_actions = []
 if suggestions:
@@ -296,50 +410,53 @@ with btn_c:
 with cnt_c:
     st.markdown(f"**{len(selected_actions)}** of {len(suggestions)} suggestions selected")
 
+
 # ─────────────────────────────────────────────────────────────────────────────
-# APPLY CLEANING — only runs when button clicked
-# Result stored in session_state so reruns (downloads, PDF) don't re-execute
+# APPLY CLEANING
 # ─────────────────────────────────────────────────────────────────────────────
 
 if apply_btn:
     prog = st.progress(0, text="Applying cleaning actions …")
     df_clean, report = apply_cleaning(df_raw, selected_actions)
+
+    # BUG-3: re-apply numeric fixer after cleaning (new string values may appear)
+    df_clean = clean_numeric_columns(df_clean)
     gc.collect()
     prog.progress(100, text="✅ Done")
 
-    # Compute analytics immediately after cleaning
     with st.spinner("🔬 Computing analytics …"):
         kpis = compute_kpis(df_clean)
 
-    # Persist everything in session_state
     st.session_state["df_clean"]        = df_clean
     st.session_state["cleaning_report"] = report
     st.session_state["kpis"]            = kpis
-    st.session_state["pdf_bytes"]       = None   # reset old PDF when re-cleaning
+    st.session_state["pdf_bytes"]       = None
     st.session_state["analysis_done"]   = True
+    st.session_state["nl_col_override"] = None
+
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GUARD — nothing below runs until analysis_done
+# GUARD
 # ─────────────────────────────────────────────────────────────────────────────
 
 if not st.session_state["analysis_done"]:
     st.info("☝️ Select cleaning suggestions above and click **Apply & Analyse** to continue.")
     st.stop()
 
-# Retrieve from session_state (survives every rerun / button click)
-df_clean       = st.session_state["df_clean"]
-cleaning_report= st.session_state["cleaning_report"]
-kpis           = st.session_state["kpis"]
+df_clean        = st.session_state["df_clean"]
+cleaning_report = st.session_state["cleaning_report"]
+kpis            = st.session_state["kpis"]
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CLEANING REPORT
 # ─────────────────────────────────────────────────────────────────────────────
 
 st.markdown('<div class="section-hdr">📑 Cleaning Report</div>', unsafe_allow_html=True)
-r1,r2,r3,r4,r5,r6 = st.columns(6)
+r1, r2, r3, r4, r5, r6 = st.columns(6)
 r1.metric("Rows Before",        f"{cleaning_report['rows_before']:,}")
 r2.metric("Rows After",         f"{cleaning_report['rows_after']:,}",
-          delta=cleaning_report['rows_after'] - cleaning_report['rows_before'])
+          delta=cleaning_report["rows_after"] - cleaning_report["rows_before"])
 r3.metric("Duplicates Removed", cleaning_report["duplicates_removed"])
 r4.metric("Missing Fixed",      cleaning_report["missing_fixed"])
 r5.metric("Cols Standardised",  cleaning_report["columns_standardized"])
@@ -352,10 +469,10 @@ with st.expander("📋 Full Action Log", expanded=False):
     else:
         st.info("No actions logged.")
 
-# Cleaned preview
 st.markdown('<div class="section-hdr">✨ Cleaned Dataset Preview</div>', unsafe_allow_html=True)
 st.caption(f"Showing first {min(preview_n, len(df_clean)):,} of {len(df_clean):,} rows")
 st.dataframe(get_preview(df_clean, preview_n), use_container_width=True)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # EXECUTIVE ANALYTICS DASHBOARD
@@ -373,25 +490,24 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Apply sidebar filters — stores filtered df in session_state too
 df_filtered = apply_filters(df_clean, kpis)
 st.session_state["df_filtered"] = df_filtered
 
 if df_filtered.empty:
     st.warning("⚠️ Filters produce an empty dataset — adjust sidebar filters.")
 else:
-    # Re-compute kpis for filtered view (cached — instant if same data)
     kpis_filtered = compute_kpis(df_filtered)
     generate_dashboard(df_filtered, kpis_filtered)
 
+
 # ─────────────────────────────────────────────────────────────────────────────
-# NATURAL LANGUAGE CHART GENERATOR
+# NATURAL LANGUAGE CHART GENERATOR  (BUG-1 disambiguation integrated)
 # ─────────────────────────────────────────────────────────────────────────────
 
 st.divider()
 st.markdown('<div class="section-hdr">💬 Natural Language Chart Generator</div>',
             unsafe_allow_html=True)
-st.markdown("Describe a chart in plain English and it appears instantly.")
+st.markdown("Describe a chart in plain English — ambiguous columns are flagged for you.")
 
 with st.expander("💡 Example prompts", expanded=False):
     ex_c = st.columns(2)
@@ -399,25 +515,75 @@ with st.expander("💡 Example prompts", expanded=False):
         with ex_c[i % 2]:
             st.markdown(f"• *{ex}*")
 
-nl_q = st.text_input("🔍 Describe your chart",
-                     placeholder="e.g. top 10 products by revenue",
-                     key="nl_chart_input")
+# ── BUG-2: show schema so user knows exact column names ──────────────────────
+with st.expander("🗂️ Available columns in your dataset", expanded=False):
+    st.markdown(
+        f'<div class="schema-box">{get_dataset_schema(df_clean)}</div>',
+        unsafe_allow_html=True,
+    )
 
-if st.button("📈 Generate Chart", type="primary", key="nl_btn") and nl_q.strip():
-    # Use filtered df for charts
+nl_q = st.text_input(
+    "🔍 Describe your chart",
+    placeholder="e.g. top 10 products by revenue",
+    key="nl_chart_input",
+)
+
+# ── BUG-1: column override selector (shown only when ambiguity was detected) ──
+ambiguous_cols = st.session_state.get("nl_ambiguous_cols", [])
+if ambiguous_cols:
+    st.warning(
+        f"⚠️ Multiple columns match your request. Please choose one:",
+        icon="⚠️",
+    )
+    chosen = st.selectbox(
+        "Select the column you meant:",
+        options=ambiguous_cols,
+        key="nl_col_picker",
+    )
+    if st.button("✅ Use this column", key="nl_col_confirm"):
+        st.session_state["nl_col_override"] = chosen
+        st.session_state["nl_ambiguous_cols"] = []
+        st.rerun()
+
+col1_btn, col2_btn = st.columns([1, 5])
+with col1_btn:
+    gen_btn = st.button("📈 Generate Chart", type="primary", key="nl_btn")
+
+if gen_btn and nl_q.strip():
     plot_df = st.session_state.get("df_filtered") or df_clean
+
+    # Inject user-chosen column into question if override is set (BUG-1)
+    effective_q = nl_q
+    override = st.session_state.get("nl_col_override")
+    if override:
+        effective_q = f"{nl_q} {override}"
+        st.session_state["nl_col_override"] = None
+
     with st.spinner("Generating chart …"):
-        fig, label = generate_chart(plot_df, nl_q)
+        fig, label = generate_chart(plot_df, effective_q)
+
     if fig is not None:
         st.plotly_chart(fig, use_container_width=True)
         st.caption(f"Intent detected: `{label}`")
+        st.session_state["nl_ambiguous_cols"] = []
     else:
-        st.warning(label)
+        # BUG-1: detect whether the error is an ambiguity message
+        if "Multiple columns match" in label:
+            # Parse the bullet list from the ambiguity message and offer selector
+            lines = [
+                l.strip().lstrip("•").strip()
+                for l in label.split("\n")
+                if l.strip().startswith("•")
+            ]
+            st.session_state["nl_ambiguous_cols"] = lines if lines else []
+            st.warning(label)
+        else:
+            st.session_state["nl_ambiguous_cols"] = []
+            st.warning(label)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # EXPORT — CSV / Excel / PDF
-# All download buttons read from session_state and do NOT trigger reruns that
-# lose the cleaned dataframe, because the df lives in session_state.
 # ─────────────────────────────────────────────────────────────────────────────
 
 st.divider()
@@ -425,7 +591,6 @@ st.markdown('<div class="section-hdr">📥 Export</div>', unsafe_allow_html=True
 
 dl1, dl2, dl3 = st.columns(3)
 
-# ── CSV download ───────────────────────────────────────────────────────────
 with dl1:
     st.download_button(
         label="⬇️ Download Cleaned CSV",
@@ -436,7 +601,6 @@ with dl1:
         key="btn_csv",
     )
 
-# ── Excel download ─────────────────────────────────────────────────────────
 with dl2:
     st.download_button(
         label="⬇️ Download Cleaned Excel",
@@ -447,10 +611,8 @@ with dl2:
         key="btn_xlsx",
     )
 
-# ── PDF report ─────────────────────────────────────────────────────────────
 with dl3:
     if pdf_available():
-        # ── Step 1: generate button ────────────────────────────────────────
         if st.session_state["pdf_bytes"] is None:
             if st.button(
                 "📄 Generate AI PDF Report",
@@ -468,9 +630,7 @@ with dl3:
                     except Exception as e:
                         st.error(f"PDF generation failed: {e}")
 
-        # ── Step 2: download button renders on the SAME rerun as generation
-        #    No st.rerun() needed — session_state["pdf_bytes"] is now set,
-        #    so this block executes immediately in the same script pass.
+        # Download button appears in the same script pass (no st.rerun needed)
         if st.session_state["pdf_bytes"] is not None:
             st.download_button(
                 label="⬇️ Download AI PDF Report",
@@ -480,11 +640,8 @@ with dl3:
                 use_container_width=True,
                 key="btn_pdf_dl",
             )
-            if st.button(
-                "🔄 Regenerate PDF",
-                use_container_width=True,
-                key="btn_regen_pdf",
-            ):
+            if st.button("🔄 Regenerate PDF", use_container_width=True,
+                         key="btn_regen_pdf"):
                 st.session_state["pdf_bytes"] = None
                 st.rerun()
     else:

@@ -1,13 +1,21 @@
 """
-analytics_engine.py
-Cached Analytics Backend — all heavy computations cached with st.cache_data.
-Handles datasets up to 500k rows efficiently.
+analytics_engine.py  v5
+Cached Analytics Backend
+
+New in v5:
+  BUG-1  resolve_column_ambiguity(df, keywords)
+           Returns one column name, a list of candidates (ambiguous), or None (no match).
+  BUG-2  get_dataset_schema(df)
+           Returns a validated schema string — column names that EXIST in df only.
+  BUG-3  clean_numeric_columns(df)
+           Coerces columns that are ≥70% numeric values to float, strips $ / commas first.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+import re
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -15,29 +23,202 @@ import streamlit as st
 
 logger = logging.getLogger(__name__)
 
-# ── Column finders ─────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BUG-3 — Numeric Type Fixer
+# Must run BEFORE any analytics so dirty "object" columns become float.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def clean_numeric_columns(df: pd.DataFrame, threshold: float = 0.70) -> pd.DataFrame:
+    """
+    For every object column whose values are ≥ *threshold* numeric (after
+    stripping common non-numeric noise like '$', ',', '%', whitespace),
+    coerce the column to float with pd.to_numeric(errors='coerce').
+
+    This fixes columns loaded as object that contain dirty values such as:
+        100, 200, "missing", "$400", "1,200.50"
+
+    Args:
+        df:         Source DataFrame (not mutated — a copy is returned).
+        threshold:  Fraction of non-null values that must parse as numeric.
+
+    Returns:
+        New DataFrame with offending object columns coerced to float.
+    """
+    df = df.copy()
+    for col in df.select_dtypes(include=["object"]).columns:
+        s = df[col].dropna().astype(str)
+        if len(s) == 0:
+            continue
+        # Strip common currency/formatting characters before testing
+        cleaned = s.str.replace(r"[$,€£¥%\s]", "", regex=True)
+        numeric  = pd.to_numeric(cleaned, errors="coerce")
+        ratio    = numeric.notna().sum() / len(cleaned)
+        if ratio >= threshold:
+            df[col] = pd.to_numeric(
+                df[col].astype(str).str.replace(r"[$,€£¥%\s]", "", regex=True),
+                errors="coerce",
+            )
+    return df
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BUG-2 — Dataset Schema Validator
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Maps pandas dtype categories to human-readable type labels
+_DTYPE_LABELS: Dict[str, str] = {
+    "int64": "integer", "int32": "integer", "int16": "integer", "int8": "integer",
+    "float64": "float",  "float32": "float",
+    "bool":   "boolean",
+    "object": "string",  "string": "string",
+    "category": "categorical",
+}
+
+
+def get_dataset_schema(df: pd.DataFrame) -> str:
+    """
+    Return a validated, human-readable schema string listing ONLY columns
+    that actually exist in *df*.  Nothing is fabricated.
+
+    Example output:
+        Dataset Schema (12 columns):
+        • order_id       — integer
+        • customer_name  — string
+        • net_margin     — float
+        • city           — categorical
+
+    This string is used as a guard-rail: any code that needs to reference
+    columns should first call this and match against df.columns.
+    """
+    lines = [f"Dataset Schema ({len(df.columns)} columns):"]
+    for col in df.columns:
+        raw   = str(df[col].dtype)
+        label = _DTYPE_LABELS.get(raw, raw)
+        # Datetime variants
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            label = "datetime"
+        lines.append(f"  • {col:<30} — {label}")
+    return "\n".join(lines)
+
+
+def validate_column(df: pd.DataFrame, col_name: str) -> bool:
+    """
+    Return True only if *col_name* is an actual column in *df*.
+    Use this before every column reference to prevent schema hallucination.
+    """
+    return col_name in df.columns
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BUG-1 — Column Ambiguity Resolver
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Return type:  str           → unambiguous single match
+#               List[str]     → multiple candidates (caller must ask user)
+#               None          → no match found
+AmbiguityResult = Union[str, List[str], None]
+
+
+def resolve_column_ambiguity(
+    df: pd.DataFrame,
+    keywords: List[str],
+    dtype_filter: Optional[str] = None,
+) -> AmbiguityResult:
+    """
+    Find all columns in *df* that match any keyword in *keywords*.
+
+    Rules
+    -----
+    1. Collect every column whose lowercased name contains any keyword.
+    2. Optionally filter by dtype_filter: "numeric" | "categorical" | "datetime".
+    3. If exactly ONE match  → return the column name (str).
+    4. If MULTIPLE matches   → return the full list (List[str])  ← caller must
+                               show the user a disambiguation message.
+    5. If NO match           → return None.
+
+    Args:
+        df:           The DataFrame to inspect.
+        keywords:     List of keyword strings to search for.
+        dtype_filter: Optional dtype constraint.
+
+    Returns:
+        str | List[str] | None
+    """
+    cl = {c.lower(): c for c in df.columns}
+    candidates: List[str] = []
+
+    for kw in keywords:
+        kw_lower = kw.lower()
+        for col_lower, col_orig in cl.items():
+            if kw_lower in col_lower and col_orig not in candidates:
+                candidates.append(col_orig)
+
+    # Apply dtype filter
+    if dtype_filter == "numeric":
+        candidates = [c for c in candidates if pd.api.types.is_numeric_dtype(df[c])]
+    elif dtype_filter == "categorical":
+        candidates = [c for c in candidates
+                      if not pd.api.types.is_numeric_dtype(df[c])
+                      and not pd.api.types.is_datetime64_any_dtype(df[c])]
+    elif dtype_filter == "datetime":
+        candidates = [c for c in candidates
+                      if pd.api.types.is_datetime64_any_dtype(df[c])]
+
+    if len(candidates) == 0:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    return candidates   # ambiguous — return all so caller can ask user
+
+
+def ambiguity_message(candidates: List[str]) -> str:
+    """
+    Build the user-facing disambiguation message for NL chart generator and
+    any other caller that receives a List[str] from resolve_column_ambiguity().
+    """
+    bullets = "\n".join(f"  • {c}" for c in candidates)
+    return (
+        f"Multiple columns match your request:\n{bullets}\n\n"
+        f"Please specify which column you want by including its exact name."
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Internal column finders  (updated to use resolve_column_ambiguity)
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _find(df: pd.DataFrame, kws: List[str]) -> Optional[str]:
-    cl = {c.lower(): c for c in df.columns}
-    for kw in kws:
-        for nl, nc in cl.items():
-            if kw in nl:
-                return nc
-    return None
+    """
+    Return the FIRST unambiguous match, or None if ambiguous / not found.
+    Ambiguous results are silently resolved by taking the first candidate
+    (safe for internal KPI computation where a best-effort pick is fine).
+    """
+    result = resolve_column_ambiguity(df, kws)
+    if isinstance(result, list):
+        return result[0]   # best-effort for internal use
+    return result          # str or None
+
 
 def _num(df: pd.DataFrame, hints: List[str]) -> Optional[str]:
-    c = _find(df, hints)
-    if c and pd.api.types.is_numeric_dtype(df[c]):
-        return c
+    result = resolve_column_ambiguity(df, hints, dtype_filter="numeric")
+    if isinstance(result, list):
+        return result[0]
+    if isinstance(result, str):
+        return result
     nums = df.select_dtypes(include=[np.number]).columns.tolist()
     return nums[0] if nums else None
 
+
 def _cat(df: pd.DataFrame, hints: List[str]) -> Optional[str]:
-    c = _find(df, hints)
-    if c and not pd.api.types.is_numeric_dtype(df[c]):
-        return c
+    result = resolve_column_ambiguity(df, hints, dtype_filter="categorical")
+    if isinstance(result, list):
+        return result[0]
+    if isinstance(result, str):
+        return result
     cats = df.select_dtypes(include=["object", "category"]).columns.tolist()
     return cats[0] if cats else None
+
 
 def _date(df: pd.DataFrame) -> Optional[str]:
     for col in df.columns:
@@ -52,6 +233,7 @@ def _date(df: pd.DataFrame) -> Optional[str]:
                 pass
     return None
 
+
 def _fmt(v: float) -> str:
     if abs(v) >= 1_000_000:
         return f"{v/1_000_000:.2f}M"
@@ -60,39 +242,54 @@ def _fmt(v: float) -> str:
     return f"{v:,.2f}"
 
 
-# ── Core analytics (all cached) ────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Core analytics — all @st.cache_data
+# ─────────────────────────────────────────────────────────────────────────────
 
 @st.cache_data(show_spinner=False)
 def compute_kpis(df: pd.DataFrame) -> Dict[str, Any]:
-    """Compute top-level KPIs. Cached per unique df."""
+    """Compute top-level business KPIs. Cached per unique df hash."""
     sales_col = _num(df, ["price", "sales", "revenue", "amount", "total", "value"])
-    qty_col   = _num(df, ["quantity", "qty", "units", "count", "volume"])
+    qty_col   = _num(df, ["quantity", "qty", "units", "volume"])
     cust_col  = _cat(df, ["customer", "client", "buyer", "user", "cust"])
     prod_col  = _cat(df, ["product", "item", "goods", "sku", "category"])
     order_col = _cat(df, ["order", "order_id", "invoice", "transaction"])
     city_col  = _cat(df, ["city", "region", "location", "state", "area", "zone"])
     date_col  = _date(df)
 
+    # --- schema guard: only reference columns that exist ---
+    def _safe(col: Optional[str]) -> Optional[str]:
+        return col if col and validate_column(df, col) else None
+
+    sales_col = _safe(sales_col)
+    qty_col   = _safe(qty_col)
+    cust_col  = _safe(cust_col)
+    prod_col  = _safe(prod_col)
+    order_col = _safe(order_col)
+    city_col  = _safe(city_col)
+    date_col  = _safe(date_col)
+
     kpis: Dict[str, Any] = {
-        "total_rows":      len(df),
-        "total_cols":      len(df.columns),
-        "memory_mb":       round(df.memory_usage(deep=True).sum() / 1024**2, 1),
-        "completeness":    round((1 - df.isna().sum().sum() / max(df.size, 1)) * 100, 1),
-        "sales_col":  sales_col,
-        "qty_col":    qty_col,
-        "cust_col":   cust_col,
-        "prod_col":   prod_col,
-        "order_col":  order_col,
-        "city_col":   city_col,
-        "date_col":   date_col,
-        "total_revenue":   "N/A",
+        "total_rows":        len(df),
+        "total_cols":        len(df.columns),
+        "memory_mb":         round(df.memory_usage(deep=True).sum() / 1024**2, 1),
+        "completeness":      round((1 - df.isna().sum().sum() / max(df.size, 1)) * 100, 1),
+        "schema":            get_dataset_schema(df),
+        "sales_col":         sales_col,
+        "qty_col":           qty_col,
+        "cust_col":          cust_col,
+        "prod_col":          prod_col,
+        "order_col":         order_col,
+        "city_col":          city_col,
+        "date_col":          date_col,
+        "total_revenue":     "N/A",
         "total_revenue_raw": 0.0,
-        "aov":             "N/A",
-        "aov_raw":         0.0,
-        "total_orders":    f"{len(df):,}",
-        "unique_customers":"N/A",
-        "unique_products": "N/A",
-        "unique_regions":  "N/A",
+        "aov":               "N/A",
+        "aov_raw":           0.0,
+        "total_orders":      f"{len(df):,}",
+        "unique_customers":  "N/A",
+        "unique_products":   "N/A",
+        "unique_regions":    "N/A",
     }
 
     if sales_col:
@@ -105,17 +302,13 @@ def compute_kpis(df: pd.DataFrame) -> Dict[str, Any]:
 
     if order_col:
         kpis["total_orders"] = f"{df[order_col].nunique():,}"
-
     if cust_col:
         kpis["unique_customers"] = f"{df[cust_col].nunique():,}"
-
     if prod_col:
-        kpis["unique_products"] = f"{df[prod_col].nunique():,}"
-
+        kpis["unique_products"]  = f"{df[prod_col].nunique():,}"
     if city_col:
-        kpis["unique_regions"] = f"{df[city_col].nunique():,}"
+        kpis["unique_regions"]   = f"{df[city_col].nunique():,}"
 
-    # Top performers
     if city_col and sales_col:
         grp = df.groupby(city_col, observed=True)[sales_col].sum()
         kpis["top_city"]     = str(grp.idxmax())
@@ -153,10 +346,9 @@ def column_profile(df: pd.DataFrame) -> pd.DataFrame:
         missing = int(s.isna().sum())
         total   = len(s)
         sample  = ", ".join(str(v) for v in s.dropna().unique()[:3])
-        dtype   = str(s.dtype)
         rows.append({
             "Column":        col,
-            "Type":          dtype,
+            "Type":          str(s.dtype),
             "Missing":       missing,
             "Missing %":     f"{missing/total*100:.1f}%",
             "Unique":        int(s.nunique()),
@@ -208,8 +400,10 @@ def group_by_col(
     agg: str = "sum",
     top_n: int = 15,
 ) -> pd.DataFrame:
-    """Generic cached groupby used by dashboard + NL engine."""
-    if group_col not in df.columns or value_col not in df.columns:
+    """Cached generic groupby. Validates columns exist before operating."""
+    # BUG-2 guard: never operate on columns that don't exist
+    if not validate_column(df, group_col) or not validate_column(df, value_col):
+        logger.warning("group_by_col: column not found — %s / %s", group_col, value_col)
         return pd.DataFrame()
     fn = {"sum": "sum", "mean": "mean", "count": "count",
           "max": "max", "min": "min"}.get(agg, "sum")
@@ -224,19 +418,20 @@ def group_by_col(
 
 @st.cache_data(show_spinner=False)
 def trend_analysis(df: pd.DataFrame) -> Optional[pd.DataFrame]:
-    """Monthly revenue trend with MA3."""
+    """Monthly revenue trend with 3-month moving average."""
     date_col  = _date(df)
     sales_col = _num(df, ["price", "sales", "revenue", "amount", "total"])
     if not date_col or not sales_col:
+        return None
+    if not validate_column(df, date_col) or not validate_column(df, sales_col):
         return None
     tmp = df[[date_col, sales_col]].copy()
     tmp[date_col] = pd.to_datetime(tmp[date_col], errors="coerce")
     tmp = tmp.dropna(subset=[date_col])
     if tmp.empty:
         return None
-    monthly = (tmp.resample("ME", on=date_col)[sales_col]
-                  .sum().reset_index())
+    monthly = tmp.resample("ME", on=date_col)[sales_col].sum().reset_index()
     monthly.columns = ["month", "revenue"]
-    monthly["ma3"]       = monthly["revenue"].rolling(3, min_periods=1).mean()
+    monthly["ma3"]        = monthly["revenue"].rolling(3, min_periods=1).mean()
     monthly["mom_growth"] = monthly["revenue"].pct_change() * 100
     return monthly
