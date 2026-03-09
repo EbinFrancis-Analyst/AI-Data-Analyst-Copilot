@@ -450,23 +450,28 @@ with dl2:
 # ── PDF report ─────────────────────────────────────────────────────────────
 with dl3:
     if pdf_available():
-        # Generate PDF once; store in session_state so the download button
-        # can be clicked without triggering a page-resetting rerun.
+        # ── Step 1: generate button ────────────────────────────────────────
         if st.session_state["pdf_bytes"] is None:
-            if st.button("📄 Generate AI PDF Report", use_container_width=True,
-                         type="primary", key="btn_gen_pdf"):
+            if st.button(
+                "📄 Generate AI PDF Report",
+                use_container_width=True,
+                type="primary",
+                key="btn_gen_pdf",
+            ):
                 with st.spinner("Building PDF report …"):
                     try:
-                        pdf_bytes = generate_pdf_report(
-                            df_clean, kpis,
+                        st.session_state["pdf_bytes"] = generate_pdf_report(
+                            df_clean,
+                            kpis,
                             dataset_name=st.session_state.get("file_name", "Dataset"),
                         )
-                        st.session_state["pdf_bytes"] = pdf_bytes
-                        st.rerun()   # rerun once to show download button
                     except Exception as e:
                         st.error(f"PDF generation failed: {e}")
-        else:
-            # PDF already generated — show download button directly
+
+        # ── Step 2: download button renders on the SAME rerun as generation
+        #    No st.rerun() needed — session_state["pdf_bytes"] is now set,
+        #    so this block executes immediately in the same script pass.
+        if st.session_state["pdf_bytes"] is not None:
             st.download_button(
                 label="⬇️ Download AI PDF Report",
                 data=st.session_state["pdf_bytes"],
@@ -475,12 +480,12 @@ with dl3:
                 use_container_width=True,
                 key="btn_pdf_dl",
             )
-            # Allow regenerating with a fresh run
-            if st.button("🔄 Regenerate PDF", use_container_width=True, key="btn_regen_pdf"):
+            if st.button(
+                "🔄 Regenerate PDF",
+                use_container_width=True,
+                key="btn_regen_pdf",
+            ):
                 st.session_state["pdf_bytes"] = None
                 st.rerun()
     else:
-        st.info(
-            "Install reportlab to enable PDF reports:\n"
-            "`pip install reportlab`"
-        )
+        st.info("Install reportlab to enable PDF reports:\n`pip install reportlab`")
